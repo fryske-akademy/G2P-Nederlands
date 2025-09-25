@@ -9,10 +9,13 @@ library(xml2)
 library(rvest)
 library(openxlsx)
 library(stringr)
+library(reticulate); use_virtualenv("/opt/venv", required = TRUE);
+library(udpipe)
 library(ggplot2)
 
 # sudo apt install python3-pip
 # sudo pip3 install phonetisaurus
+# sudo pip3 install lingpy
 
 # sudo apt install libcurl4-openssl-dev
 # sudo apt install libxml2
@@ -83,9 +86,14 @@ ui <- tagList(
         uiOutput("getInput"),
         br(),
 
-        shiny::actionButton("clearButton", HTML("<span class='glyphicon glyphicon-erase' style='font-size: 90%'></span>&nbsp;Clear")),
+        splitLayout
+        (
+          cellWidths = c("215px", "90px"),
+          pickerInput('selModel', NULL, c("excl. primary stress marks", "incl. primary stress marks"), selected="excl. primary stress marks", multiple=FALSE, width="205px", options = pickerOptions(title = "Language", dropupAuto = F, container = 'body')),
+          shiny::actionButton("clearButton", HTML("<span class='glyphicon glyphicon-erase' style='font-size: 90%'></span>&nbsp;Clear"))
+        ),
 
-        br(), br(), br(),
+        br(),
         busyIndicator(text = NULL, wait = 1000),
         uiOutput("showResults"),
         br(), br(), br(), br()
@@ -173,6 +181,7 @@ ui <- tagList(
           tags$li(tags$span(HTML("<span style='color:blue'>rvest</span>"), p("Hadley Wickham (2021). rvest: Easily Harvest (Scrape) Web Pages. R package version 1.0.2. https://CRAN.R-project.org/package=rvest"))),
           tags$li(tags$span(HTML("<span style='color:blue'>openxlsx</span>"), p("Philipp Schauberger and Alexander Walker (2020). openxlsx: Read, Write and Edit xlsx Files. R package version 4.2.3. https://CRAN.R-project.org/package=openxlsx"))),
           tags$li(tags$span(HTML("<span style='color:blue'>stringr</span>"), p("Hadley Wickham (2019). stringr: Simple, Consistent Wrappers for Common String Operations. R package version 1.4.0. https://CRAN.R-project.org/package=stringr"))),
+          tags$li(tags$span(HTML("<span style='color:blue'>reticulate</span>"), p("Ushey K, Allaire J, Tang Y (2024). _reticulate: Interface to 'Python'_. R package version 1.40.0. https://doi.org/10.32614/CRAN.package.reticulate"))),
           tags$li(tags$span(HTML("<span style='color:blue'>udpipe</span>"), p("Wijffels J (2023). _udpipe: Tokenization, Parts of Speech Tagging, Lemmatization and Dependency Parsing with the 'UDPipe' 'NLP' Toolkit_. R package version 0.8.11. https://doi.org/10.32614/CRAN.package.udpipe"))),
           tags$li(tags$span(HTML("<span style='color:blue'>DT</span>"), p("Yihui Xie, Joe Cheng and Xianying Tan (2019). DT: A Wrapper of the JavaScript Library 'DataTables'. R package version 0.11. https://CRAN.R-project.org/package=DT"))),
           tags$li(tags$span(HTML("<span style='color:blue'>ggplot2</span>"), p("H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York, 2016.")))
@@ -260,13 +269,16 @@ server <- function(input, output, session)
 
   ##############################################################################
 
-  global <- reactiveValues(firstFY=TRUE, firstNL=TRUE, firstEN=TRUE, UDfy=NULL, UDnl=NULL, UDen=NULL)
+  global <- reactiveValues(firstFY=TRUE, firstNL=TRUE, firstEN=TRUE, UDfy=NULL, UDnl=NULL, UDen=NULL, model=NULL)
 
   segments   <- c("i", "y", "ỹ", "ɨ", "ʉ", "ɯ", "u", "ɪ", "ʏ", "ʊ", "e", "ø", "ɘ", "ɵ", "ɤ", "o", "ə", "ɛ", "œ", "ɜ", "ɞ", "ʌ", "ɔ", "æ", "ɐ", "a", "ɶ", "ɑ", "ɒ", "p", "b", "t", "d", "ʈ", "ɖ", "c", "ɟ", "k", "ɡ", "q", "ɢ", "ʔ", "m", "ɱ", "n", "ɳ", "ɲ", "ŋ", "ʙ", "r", "ʀ", "ⱱ", "ɾ", "ɽ", "ɸ", "β", "f", "v", "θ", "ð", "s", "z", "ʃ", "ʒ", "ʂ", "ʐ", "ç", "ʝ", "x", "ɣ", "χ", "ʁ", "ħ", "ʕ", "h", "ɦ", "ɬ", "ɮ", "ʋ", "ɹ", "ɻ", "j", "ɰ", "l", "ɭ", "ʎ", "ʟ", "w")
   vowels     <- c("i", "y", "ỹ", "ɨ", "ʉ", "ɯ", "u", "u̯", "ɪ", "ʏ", "ʊ", "e", "ø", "ɘ", "ɵ", "ɤ", "o", "ɛ", "œ", "ɜ", "ɞ", "ʌ", "ɔ", "æ", "ɐ", "a", "ɶ", "ɑ", "ɒ")
-  diphtriph  <- c("ɛ i", "œ y", "ɑ u")
+  diphtriph  <- c("ɛ i", "ɑ u", "œ y")
   diphtriph0 <- gsub(" ", "", diphtriph)
-  
+
+  builtins <- import_builtins()
+  lingpy   <- import("lingpy")
+
   ##############################################################################
 
   output$aceEditor <- renderUI(
@@ -378,18 +390,99 @@ server <- function(input, output, session)
     return(p)
   }
 
+  checkStress <- function(gi, pi, lemma, upos)
+  {
+    ns <- str_count(pi, "ˈ")
+
+    if (ns == 0)
+    {
+      if (gi!=lemma)
+      {
+        lemma <- num2word(lemma)
+        p <- unlist(system(command = paste0("phonetisaurus predict --model www/g2p_stress.fst --casing ignore ", lemma), intern = TRUE))
+        sep <- str_locate(p, " ")[1]
+        pl <- substr(p, sep+1, nchar(p))
+        pl <- gsub(" ", "", pl)
+        pl <- gsub("tt$", "t", pl)
+
+        if (str_count(pl, "ˈ") > 0)
+        {
+          pl <- sub("ˈ", "&", pl)
+     
+          multi <- lingpy$Multiple(c(pi,pl))
+          multi$prog_align()
+          
+          a <- strsplit(builtins$str(multi), split="\n")
+          
+          a1 <- unlist(strsplit(a[[1]][1], split="\t"))
+          a2 <- unlist(strsplit(a[[1]][2], split="\t"))
+          
+          a1[which(a2=="&")] <- "ˈ"
+          a1 <- paste0(a1, collapse = "")
+          a1 <- gsub("-", "", a1)
+          return(a1)
+        }
+        else {}        
+      }
+      else {}
+      
+      for (i in 1:nchar(pi))
+      {
+        ch <- substring(pi, i, i)
+          
+        if (is.element(ch, vowels))
+        {
+          pi <- sub(ch, paste0("ˈ",ch), pi)
+          break
+        }
+      }
+      
+      if (!grepl("ˈ", pi))
+      {
+        for (i in 1:nchar(pi))
+        {
+          ch <- substring(pi, i, i)
+          
+          if (is.element(ch, "ə"))
+          {
+            pi <- sub(ch, paste0("ˈ",ch), pi)
+            break
+          }
+        }
+      }
+    }
+    else
+    
+    if (ns >  1)
+    {
+      pi <-  sub("ˈ", "#", pi, fixed = T)
+      pi <- gsub("ˈ", "" , pi, fixed = T)
+      pi <-  sub("#", "ˈ", pi, fixed = T)
+    }
+    else {}
+    
+    return(pi)
+  }
+
   graph2phon <- function(ud)
   {
+    ud <- subset(ud, token!="-")
+
     p <- gsub("'" , "\\'", ud$token, fixed = TRUE)
     p <- gsub("^-", "", p)
     p <- gsub("-$", "", p)
     p <- num2word(p)
     p <- tolower(paste(p, collapse = " "))
-    
+
+    if (input$selModel=="excl. primary stress marks")
+      m <- "g2p.fst"
+    if (input$selModel=="incl. primary stress marks")
+      m <- "g2p_stress.fst"
+
     if (p!="")
     {
-      p <- unlist(system(command = paste0("/opt/venv/bin/phonetisaurus predict --model /srv/shiny-server/www/g2p.fst --casing ignore ", p), intern = TRUE))
-      
+      p <- unlist(system(command = paste0("phonetisaurus predict --model www/", m, " --casing ignore ", p), intern = TRUE))
+
       if (length(p) == nrow(ud))
       {
         df <- data.frame()
@@ -402,16 +495,23 @@ server <- function(input, output, session)
           
           pi <- substr(p[i], sep+1, nchar(p[i]))
           pi <- gsub(" ", "", pi)
-          
+          pi <- gsub("tt$", "t", pi)
+
+          if ((gi=="Een") | (gi=="een"))
+            pi <- "ən"
+
+          if ((pi!="kkk") & (input$selModel=="incl. primary stress marks"))
+            pi <- checkStress(gi, pi, tolower(ud$lemma[i]), ud$upos[i])
+
           df <- rbind(df, data.frame(graphemic=gi, phonemic=pi))
         }
         
         df$graphemic <- ud$token
         df$lemma     <- ud$lemma
         df$upos      <- ud$upos
-        
+
         df$phonemic  <- gsub("kkk", "...", df$phonemic )
-        
+
         for (i in 1:length(segments))
         {
           df$phonemic <- gsub(segments[i], paste0(" ", segments[i]), df$phonemic)
@@ -422,8 +522,21 @@ server <- function(input, output, session)
         for (i in 1:length(diphtriph))
         {
           df$phonemic <- gsub(diphtriph[i], diphtriph0[i], df$phonemic)
+
+          diphtriph2  <- sub(" ", "ˈ ", diphtriph[i])
+          diphtriph20 <- paste0("ˈ", diphtriph0[i])
+          
+          df$phonemic <- gsub(diphtriph2, diphtriph20, df$phonemic)
+          
+          diphtriph3  <- sub(" ([^ ]*)$", "ˈ \\1", diphtriph[i])
+          diphtriph30 <- paste0("ˈ", diphtriph0[i])
+          
+          df$phonemic <- gsub(diphtriph3, diphtriph30, df$phonemic)
         }
-        
+
+        df$phonemic <- gsub("ˈ " , " ˈ", df$phonemic)
+        df$phonemic <- gsub("^ ˈ", "ˈ" , df$phonemic)
+
         return(df)
       }
       else
@@ -441,8 +554,8 @@ server <- function(input, output, session)
 
   annotateUD <- function(s)
   {
-    query <- paste0("/usr/bin/curl --data 'tokenizer=&tagger=&parser=&data=", s, "&model=dutch-lassysmall-ud-2.12-230717' http://lindat.mff.cuni.cz/services/udpipe/api/process")
-    
+    query <- paste0("curl --data 'tokenizer=&tagger=&parser=&data=", s, "&model=dutch-lassysmall-ud-2.12-230717' http://lindat.mff.cuni.cz/services/udpipe/api/process")
+
     result <- system(query, intern = TRUE)
     result <- paste(result, collapse = " ")
     result <- str_extract(result, "sent_id[:print:]+")
@@ -463,7 +576,7 @@ server <- function(input, output, session)
       
       df <- rbind(df, df0)
     }
-    
+
     df <- subset(df, !is.na(token_id) & !is.na(upos))
     df <- subset(df, !grepl("# sent_id", token_id))
     df <- subset(df, !grepl("# text =" , token_id))
@@ -478,33 +591,33 @@ server <- function(input, output, session)
     s <- str_replace_all(s, "(?<=([:space:]|[:punct:]))\\’(?=([:alpha:][:alpha:]))", " ")
     s <- str_replace_all(s, "\\’ ", " ")
     s <- str_replace_all(s, "\\’$", "")
-    
+
     if (nchar(s) > 0)
-      return(annotateUD(s)[,2:4])
+      return(annotateUD(s))
     else
     {
       showNotification("The text is empty or consists only of unknown tokens!", type = "error")
       return(NULL)
     }	  
-  }  
+  }
 
   resultUD <- reactive(
   {
     req(checkText())
     result <- processText(checkText())
-      
+
     if (is.data.frame(result))
       return(graph2phon(result))
     else
       return(NULL)
   })
-  
+
   output$resultUD <- DT::renderDataTable(
     resultUD(),
     options = list(scrollX = TRUE, searching = FALSE, pageLength = 500, lengthChange = FALSE, 
                    initComplete = htmlwidgets::JS("function(settings, json) {", "$(this.api().table().container()).css({'font-family': 'Courier'});", "}" ))
   )
-  
+
   output$showResults <- renderUI(
   {
     req(checkText())
@@ -584,8 +697,8 @@ server <- function(input, output, session)
       all <- gsub(ph, paste0(" ", ph), all)
     }
 
-    phonemes1 <- c("aː i̯", "ɔˑ u̯", "j oˑ u̯", "j ɛ", "ɪˑ ə", "øˑ ə", "aˑ i̯", "j ɪ", "iˑ ə", "ɛˑ i̯", "oː i̯", "u̯ a", "oˑ ə", "uˑ i̯", "o i̯", "ɔˑ u̯", "u̯ o i̯", "j ø", "øˑ ə", "u̯ o", "œˑ i̯")
-    phonemes2 <- c("aːi̯" , "ɔˑu̯" , "joˑu̯"  , "jɛ" , "ɪˑə" , "øˑə" , "aˑi̯" , "jɪ" , "iˑə" , "ɛˑi̯" , "oːi̯" , "u̯a" , "oˑə" , "uˑi̯" , "oi̯" , "ɔˑu̯" , "u̯oi̯"  , "jø" , "øˑə" , "u̯o" , "œˑi̯" )
+    phonemes1 <- diphtriph
+    phonemes2 <- diphtriph0
 
     for (i in 1:length(phonemes1))
     {
