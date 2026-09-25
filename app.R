@@ -9,9 +9,10 @@ library(xml2)
 library(rvest)
 library(openxlsx)
 library(stringr)
-library(reticulate); use_virtualenv("/opt/venv", required = TRUE);
+library(reticulate)
 library(udpipe)
 library(ggplot2)
+library(processx)
 
 # sudo apt install python3-pip
 # sudo pip3 install phonetisaurus
@@ -180,6 +181,7 @@ ui <- tagList(
           tags$li(tags$span(HTML("<span style='color:blue'>xml2</span>"), p("Hadley Wickham, Jim Hester and Jeroen Ooms (2021). xml2: Parse XML. R package version 1.3.3. https://CRAN.R-project.org/package=xml2"))),
           tags$li(tags$span(HTML("<span style='color:blue'>rvest</span>"), p("Hadley Wickham (2021). rvest: Easily Harvest (Scrape) Web Pages. R package version 1.0.2. https://CRAN.R-project.org/package=rvest"))),
           tags$li(tags$span(HTML("<span style='color:blue'>openxlsx</span>"), p("Philipp Schauberger and Alexander Walker (2020). openxlsx: Read, Write and Edit xlsx Files. R package version 4.2.3. https://CRAN.R-project.org/package=openxlsx"))),
+          tags$li(tags$span(HTML("<span style='color:blue'>processx</span>"), p("Csárdi G, Chang W (2026). _processx: Execute and Control System   Processes_. R package version 3.9.0. https://doi.org/10.32614/CRAN.package.processx"))),
           tags$li(tags$span(HTML("<span style='color:blue'>stringr</span>"), p("Hadley Wickham (2019). stringr: Simple, Consistent Wrappers for Common String Operations. R package version 1.4.0. https://CRAN.R-project.org/package=stringr"))),
           tags$li(tags$span(HTML("<span style='color:blue'>reticulate</span>"), p("Ushey K, Allaire J, Tang Y (2024). _reticulate: Interface to 'Python'_. R package version 1.40.0. https://doi.org/10.32614/CRAN.package.reticulate"))),
           tags$li(tags$span(HTML("<span style='color:blue'>udpipe</span>"), p("Wijffels J (2023). _udpipe: Tokenization, Parts of Speech Tagging, Lemmatization and Dependency Parsing with the 'UDPipe' 'NLP' Toolkit_. R package version 0.8.11. https://doi.org/10.32614/CRAN.package.udpipe"))),
@@ -271,8 +273,8 @@ server <- function(input, output, session)
 
   global <- reactiveValues(firstFY=TRUE, firstNL=TRUE, firstEN=TRUE, UDfy=NULL, UDnl=NULL, UDen=NULL, model=NULL)
 
-  segments   <- c("i", "y", "ỹ", "ɨ", "ʉ", "ɯ", "u", "ɪ", "ʏ", "ʊ", "e", "ø", "ɘ", "ɵ", "ɤ", "o", "ə", "ɛ", "œ", "ɜ", "ɞ", "ʌ", "ɔ", "æ", "ɐ", "a", "ɶ", "ɑ", "ɒ", "p", "b", "t", "d", "ʈ", "ɖ", "c", "ɟ", "k", "ɡ", "q", "ɢ", "ʔ", "m", "ɱ", "n", "ɳ", "ɲ", "ŋ", "ʙ", "r", "ʀ", "ⱱ", "ɾ", "ɽ", "ɸ", "β", "f", "v", "θ", "ð", "s", "z", "ʃ", "ʒ", "ʂ", "ʐ", "ç", "ʝ", "x", "ɣ", "χ", "ʁ", "ħ", "ʕ", "h", "ɦ", "ɬ", "ɮ", "ʋ", "ɹ", "ɻ", "j", "ɰ", "l", "ɭ", "ʎ", "ʟ", "w")
-  vowels     <- c("i", "y", "ỹ", "ɨ", "ʉ", "ɯ", "u", "u̯", "ɪ", "ʏ", "ʊ", "e", "ø", "ɘ", "ɵ", "ɤ", "o", "ɛ", "œ", "ɜ", "ɞ", "ʌ", "ɔ", "æ", "ɐ", "a", "ɶ", "ɑ", "ɒ")
+  segments   <- c("i", "y", "ɨ", "ʉ", "ɯ", "u", "ɪ", "ʏ", "ʊ", "e", "ø", "ɘ", "ɵ", "ɤ", "o", "ə", "ɛ", "œ", "ɜ", "ɞ", "ʌ", "ɔ", "æ", "ɐ", "a", "ɶ", "ɑ", "ɒ", "p", "b", "t", "d", "ʈ", "ɖ", "c", "ɟ", "k", "ɡ", "q", "ɢ", "ʔ", "m", "ɱ", "n", "ɳ", "ɲ", "ŋ", "ʙ", "r", "ʀ", "ⱱ", "ɾ", "ɽ", "ɸ", "β", "f", "v", "θ", "ð", "s", "z", "ʃ", "ʒ", "ʂ", "ʐ", "ç", "ʝ", "x", "ɣ", "χ", "ʁ", "ħ", "ʕ", "h", "ɦ", "ɬ", "ɮ", "ʋ", "ɹ", "ɻ", "j", "ɰ", "l", "ɭ", "ʎ", "ʟ", "w")
+  vowels     <- c("i", "y", "ɨ", "ʉ", "ɯ", "u", "ɪ", "ʏ", "ʊ", "e", "ø", "ɘ", "ɵ", "ɤ", "o",      "ɛ", "œ", "ɜ", "ɞ", "ʌ", "ɔ", "æ", "ɐ", "a", "ɶ", "ɑ", "ɒ")
   diphtriph  <- c("ɛ i", "ɑ u", "œ y")
   diphtriph0 <- gsub(" ", "", diphtriph)
 
@@ -390,6 +392,44 @@ server <- function(input, output, session)
     return(p)
   }
 
+  run_phonetisaurus <- function(model, words)
+  {
+    # Een zin moet als afzonderlijke woorden aan Phonetisaurus
+    # worden doorgegeven.
+    words <- unlist(strsplit(words, "\\s+"))
+    words <- words[nzchar(words)]
+    
+    result <- processx::run(
+      command = "phonetisaurus",
+      args = c(
+        "predict",
+        "--model", model,
+        "--casing", "ignore",
+        words
+      ),
+      stdout = "|",
+      stderr = "|",
+      error_on_status = FALSE
+    )
+    
+    if (result$status != 0)
+    {
+      showNotification(
+        paste(
+          "Phonetisaurus exited with status",
+          result$status,
+          result$stderr
+        ),
+        type = "error",
+        duration = NULL
+      )
+      
+      return(character(0))
+    }
+    
+    strsplit(result$stdout, "\n", fixed = TRUE)[[1]]
+  }
+
   checkStress <- function(gi, pi, lemma, upos)
   {
     ns <- str_count(pi, "ˈ")
@@ -399,7 +439,7 @@ server <- function(input, output, session)
       if (gi!=lemma)
       {
         lemma <- num2word(lemma)
-        p <- unlist(system(command = paste0("phonetisaurus predict --model www/g2p_stress.fst --casing ignore ", lemma), intern = TRUE))
+        p <- run_phonetisaurus("www/g2p_stress.fst", lemma)
         sep <- str_locate(p, " ")[1]
         pl <- substr(p, sep+1, nchar(p))
         pl <- gsub(" ", "", pl)
@@ -481,7 +521,7 @@ server <- function(input, output, session)
 
     if (p!="")
     {
-      p <- unlist(system(command = paste0("phonetisaurus predict --model www/", m, " --casing ignore ", p), intern = TRUE))
+      p <- run_phonetisaurus(paste0("www/", m), p)
 
       if (length(p) == nrow(ud))
       {
@@ -501,7 +541,7 @@ server <- function(input, output, session)
             pi <- "ən"
 
           if ((pi!="kkk") & (input$selModel=="incl. primary stress marks"))
-            pi <- checkStress(gi, pi, tolower(ud$lemma[i]), ud$upos[i])
+            pi <- checkStress(gi, pi, tolower(gsub("_", "", ud$lemma[i])), ud$upos[i])
 
           df <- rbind(df, data.frame(graphemic=gi, phonemic=pi))
         }
@@ -554,9 +594,37 @@ server <- function(input, output, session)
 
   annotateUD <- function(s)
   {
-    query <- paste0("curl --data 'tokenizer=&tagger=&parser=&data=", s, "&model=dutch-lassysmall-ud-2.12-230717' http://lindat.mff.cuni.cz/services/udpipe/api/process")
-
-    result <- system(query, intern = TRUE)
+    result <- processx::run(
+      command = "curl",
+      args = c(
+        "--data-urlencode", "tokenizer=",
+        "--data-urlencode", "tagger=",
+        "--data-urlencode", "parser=",
+        "--data-urlencode", paste0("data=", s),
+        "--data-urlencode", "model=dutch-lassysmall-ud-2.12-230717",
+        "http://lindat.mff.cuni.cz/services/udpipe/api/process"
+      ),
+      stdout = "|",
+      stderr = "|",
+      error_on_status = FALSE
+    )
+    
+    if (result$status != 0)
+    {
+      showNotification(
+        paste(
+          "UDPipe request failed with status",
+          result$status,
+          result$stderr
+        ),
+        type = "error",
+        duration = NULL
+      )
+      
+      return(NULL)
+    }
+    
+    result <- strsplit(result$stdout, "\n", fixed = TRUE)[[1]]
     result <- paste(result, collapse = " ")
     result <- str_extract(result, "sent_id[:print:]+")
     result <- unlist(strsplit(result, "\\n", fixed = TRUE))
