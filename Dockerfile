@@ -60,6 +60,7 @@ RUN R -e "install.packages('ggplot2',      dependencies=TRUE, repos='https://clo
 RUN R -e "install.packages('readODS',      dependencies=TRUE, repos='https://cloud.r-project.org/')"
 RUN R -e "install.packages('RJSONIO',      dependencies=TRUE, repos='https://cloud.r-project.org/')"
 RUN R -e "install.packages('plyr',         dependencies=TRUE, repos='https://cloud.r-project.org/')"
+RUN R -e "install.packages('processx',     dependencies=TRUE, repos='https://cloud.r-project.org/')"
 RUN R -e "install.packages('/srv/shiny-server/shinysky_0.1.3.tar.gz', repos=NULL, type='source')"
 
 # Expose the Shiny port
